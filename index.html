@@ -1,0 +1,579 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>JTA6</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Archivo:wght@700;800&family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans+KR:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+/* Layout: 지도(좌) + 국가 패널(우), 아래 월별 전체 기록. 차콜 그레이 바탕, 검은 바다, 와인색 강조. 단일 테마. */
+:root{
+  --bg:#26272b; --surface:#2f3035; --raised:#37393f; --ink:#ecebe8; --muted:#a3a3a8; --line:#44464d;
+  --ocean:#000000; --land:#33353a; --has-lo:#5c5f66; --has-hi:#b9bbc0;
+  --wine:#8e2a45; --wine-text:#d77a92; --wine-weak:rgba(142,42,69,.18);
+  --idea:#d2a865; --issue:#8faacb; --rate:#86b8a6;
+  --display:"Archivo","IBM Plex Sans KR",system-ui,sans-serif;
+  --body:"IBM Plex Sans KR","Apple SD Gothic Neo","Malgun Gothic",system-ui,sans-serif;
+  --mono:"IBM Plex Mono",ui-monospace,Menlo,monospace;
+  color-scheme:dark;
+}
+*{box-sizing:border-box}
+html,body{margin:0}
+body{background:var(--bg);color:var(--ink);font-family:var(--body);font-size:15px;line-height:1.6}
+a{color:var(--wine-text)}
+:focus-visible{outline:2px solid var(--wine-text);outline-offset:2px}
+.wrap{max-width:1320px;margin:0 auto;padding:0 20px}
+header{border-bottom:1px solid var(--line)}
+.head{display:flex;flex-wrap:wrap;gap:16px 40px;align-items:flex-end;justify-content:space-between;padding-top:30px;padding-bottom:22px}
+.brand{display:grid;gap:6px}
+.wordmark{display:flex;align-items:baseline;gap:12px}
+.wordmark b{font-family:var(--display);font-weight:800;font-size:52px;line-height:1;letter-spacing:-.01em}
+.wordmark b i{font-style:normal;color:var(--wine-text)}
+.wordmark span{font-family:var(--mono);font-size:13px;letter-spacing:.12em;color:var(--muted);text-transform:uppercase}
+.brand h1{font-size:19px;line-height:1.4;margin:6px 0 0;font-weight:600;text-wrap:balance}
+.brand p{margin:0;color:var(--muted);max-width:64ch}
+.stats{display:flex;gap:28px;font-variant-numeric:tabular-nums}
+.stat b{display:block;font-family:var(--mono);font-size:26px;font-weight:500}
+.stat span{font-size:12px;color:var(--muted)}
+.controls{display:flex;flex-wrap:wrap;gap:10px 16px;align-items:center;padding:16px 0}
+.controls label{font-size:13px;color:var(--muted)}
+select{font:inherit;font-size:14px;padding:6px 10px;border:1px solid var(--line);border-radius:6px;background:var(--surface);color:var(--ink)}
+.chips{display:flex;flex-wrap:wrap;gap:6px}
+.chip{font:inherit;font-size:13px;padding:5px 12px;border-radius:999px;border:1px solid var(--line);background:transparent;color:var(--muted);cursor:pointer;display:inline-flex;align-items:center;gap:6px}
+.chip[aria-pressed="true"]{border-color:var(--ink);background:var(--raised);color:var(--ink)}
+.dot{width:8px;height:8px;border-radius:50%;display:inline-block;flex:none}
+.dot.idea{background:var(--idea)} .dot.issue{background:var(--issue)} .dot.rate{background:var(--rate)}
+.toggle{display:inline-flex;align-items:center;gap:6px;font-size:13px;color:var(--muted)}
+.toggle input{accent-color:var(--wine)}
+main{display:grid;grid-template-columns:minmax(0,1.75fr) minmax(320px,1fr);gap:20px;padding-bottom:28px;align-items:start}
+@media (max-width:900px){main{grid-template-columns:1fr}.wordmark b{font-size:42px}.mapbox{position:relative!important;top:auto}}
+.card{background:var(--surface);border:1px solid var(--line);border-radius:10px}
+.mapbox{position:sticky;top:16px;overflow:hidden;background:var(--ocean);border-color:#111}
+#map{display:block;width:100%;height:auto;touch-action:none;cursor:grab}
+#map .sphere{fill:var(--ocean);stroke:#1a1a1c}
+#map path.country{fill:var(--land);stroke:#000;stroke-width:.5;vector-effect:non-scaling-stroke;transition:fill .12s}
+#map path.has{cursor:pointer}
+#map path.country:hover{fill:var(--wine)!important}
+#map path.sel{fill:var(--wine)!important;stroke:var(--wine-text);stroke-width:1.2}
+.maptools{position:absolute;right:12px;top:12px;display:flex;flex-direction:column;gap:6px}
+.maptools button{width:32px;height:32px;border-radius:6px;border:1px solid var(--line);background:var(--surface);color:var(--ink);font:500 16px var(--mono);cursor:pointer}
+.maptools button:hover{border-color:var(--wine-text)}
+.legend{position:absolute;left:12px;bottom:10px;font-size:12px;color:var(--muted);display:flex;align-items:center;gap:8px;background:rgba(38,39,43,.92);padding:4px 8px;border-radius:6px;border:1px solid var(--line)}
+.legend .ramp{display:flex}
+.legend .ramp i{width:16px;height:10px;display:block}
+.legend .sw{width:10px;height:10px;background:var(--wine);display:inline-block;border-radius:2px}
+.tip{position:absolute;pointer-events:none;background:var(--ink);color:var(--bg);font-size:12px;padding:4px 8px;border-radius:4px;white-space:nowrap;display:none}
+.panel{padding:20px}
+.panel h2{font-size:22px;margin:0 0 2px;text-wrap:balance}
+.panel .sub{color:var(--muted);font-size:13px;margin:0 0 16px;font-family:var(--mono)}
+.back{font:inherit;font-size:13px;background:none;border:0;color:var(--wine-text);padding:0;margin-bottom:10px;cursor:pointer}
+.month{font-family:var(--mono);font-size:12px;letter-spacing:.06em;color:var(--muted);border-top:1px solid var(--line);padding-top:10px;margin:18px 0 10px}
+.month.first{border-top:0;padding-top:0;margin-top:0}
+.entry{display:grid;gap:8px;padding:14px 16px;background:var(--raised);border:1px solid var(--line);border-left:3px solid var(--c,var(--wine));border-radius:8px;margin-bottom:12px}
+.entry.idea{--c:var(--idea)} .entry.issue{--c:var(--issue)} .entry.rate{--c:var(--rate)}
+.meta{display:flex;flex-wrap:wrap;gap:6px 10px;align-items:center;font-size:12px}
+.pill{font-weight:600;color:var(--c)}
+.badge{font-size:11px;padding:1px 7px;border-radius:4px;border:1px dashed var(--muted);color:var(--muted)}
+.flag{font-family:var(--mono);color:var(--muted)}
+.credit{font-size:12px;color:var(--muted)}
+.entry h3{font-size:16px;margin:0;line-height:1.45;text-wrap:balance}
+.entry p{margin:0}
+.entry ul{margin:0;padding-left:18px;display:grid;gap:4px;font-size:14px}
+.meaning{background:var(--wine-weak);border:1px solid rgba(142,42,69,.45);border-radius:6px;padding:8px 10px;font-size:14px}
+.meaning b{font-size:12px;display:block;color:var(--wine-text);font-weight:600}
+.tbl{overflow-x:auto}
+table{border-collapse:collapse;width:100%;font-size:13px;font-variant-numeric:tabular-nums}
+th,td{text-align:left;padding:5px 6px;border-bottom:1px solid var(--line);vertical-align:top}
+th{color:var(--muted);font-weight:500}
+td.num{font-family:var(--mono);text-align:right}
+.up{color:#e58a7a} .down{color:#8fb4e8}
+.note{font-size:11px;color:var(--muted)}
+.src{font-size:12px;color:var(--muted)}
+.empty{color:var(--muted);font-size:14px;padding:12px 0}
+.clist{display:flex;flex-wrap:wrap;gap:6px;margin-top:6px}
+.clist button{font:inherit;font-size:13px;padding:4px 10px;border-radius:6px;border:1px solid var(--line);background:var(--raised);color:var(--ink);cursor:pointer}
+.clist button:hover{border-color:var(--wine-text)}
+.clist button b{font-family:var(--mono);font-weight:500;color:var(--muted);margin-left:4px}
+section.all{padding-bottom:40px}
+section.all h2{font-size:18px;margin:8px 0 12px}
+.tablewrap{overflow-x:auto}
+.all table td,.all table th{padding:9px 12px}
+.all tr.row{cursor:pointer}
+.all tr.row:hover td{background:var(--wine-weak)}
+footer{border-top:1px solid var(--line);color:var(--muted);font-size:12px;padding:16px 0 28px}
+footer .wrap{display:grid;gap:4px}
+@media (prefers-reduced-motion: reduce){*{transition:none!important;animation:none!important}}
+
+/* ---- 편집 모드 ---- */
+.editlink{font:inherit;font-size:12px;background:none;border:0;padding:0;color:var(--muted);text-decoration:underline;cursor:pointer}
+.editlink:hover{color:var(--wine-text)}
+#editor{position:fixed;inset:0;background:rgba(10,10,12,.72);display:none;z-index:50;overflow-y:auto;padding:24px 16px}
+#editor.open{display:block}
+.ed{max-width:880px;margin:0 auto;background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:22px;display:grid;gap:18px}
+.ed h2{margin:0;font-size:20px}
+.ed h3{margin:0;font-size:15px;color:var(--muted);font-weight:600}
+.ed .row{display:flex;flex-wrap:wrap;gap:10px;align-items:center;justify-content:space-between}
+.ed fieldset{border:1px solid var(--line);border-radius:8px;padding:14px;margin:0;display:grid;gap:10px}
+.ed legend{padding:0 6px;color:var(--muted);font-size:13px}
+.ed .grid2{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+@media (max-width:640px){.ed .grid2{grid-template-columns:1fr}}
+.ed label{display:grid;gap:4px;font-size:13px;color:var(--muted)}
+.ed input[type=text],.ed input[type=password],.ed input[type=month],.ed select,.ed textarea{font:inherit;font-size:14px;color:var(--ink);background:var(--bg);border:1px solid var(--line);border-radius:6px;padding:7px 9px;width:100%}
+.ed textarea{min-height:72px;resize:vertical;line-height:1.5}
+.ed .hint{font-size:12px;color:var(--muted)}
+.ed .btn{font:inherit;font-size:14px;padding:7px 14px;border-radius:6px;border:1px solid var(--line);background:var(--raised);color:var(--ink);cursor:pointer}
+.ed .btn:hover{border-color:var(--wine-text)}
+.ed .btn.primary{background:var(--wine);border-color:var(--wine);color:#fff}
+.ed .btn.danger{color:#e58a7a}
+.ed .list{display:grid;gap:6px}
+.ed .item{display:flex;gap:10px;align-items:center;justify-content:space-between;padding:8px 10px;border:1px solid var(--line);border-radius:6px;background:var(--raised);font-size:14px}
+.ed .item span.m{font-family:var(--mono);font-size:12px;color:var(--muted);margin-right:8px}
+.ed .item .acts{display:flex;gap:6px;flex:none}
+.ed .status{font-size:13px;min-height:1.4em}
+.ed .status.ok{color:var(--rate)} .ed .status.err{color:#e58a7a}
+.ed .check{display:flex;gap:6px;align-items:center;color:var(--ink)}
+</style>
+</head>
+<body>
+<header>
+  <div class="wrap head">
+    <div class="brand">
+      <div class="wordmark"><b id="wm">JTA<i>6</i></b><span id="owner">by JAY</span></div>
+      <h1 id="tagline">매크로 흐름을 읽고, 그 안에서 고객에게 맞는 상품을 찾습니다.</h1>
+      <p id="about"></p>
+    </div>
+    <div class="stats" aria-label="기록 요약">
+      <div class="stat"><b id="s-countries">0</b><span>국가</span></div>
+      <div class="stat"><b id="s-entries">0</b><span>기록</span></div>
+      <div class="stat"><b id="s-months">0</b><span>개월</span></div>
+    </div>
+  </div>
+</header>
+
+<div class="wrap">
+  <div class="controls">
+    <label for="month">월</label>
+    <select id="month"><option value="all">전체 기간</option></select>
+    <div class="chips" id="types" role="group" aria-label="기록 종류"></div>
+    <label class="toggle" for="drafts"><input type="checkbox" id="drafts" checked> 초안 포함</label>
+  </div>
+
+  <main>
+    <div class="card mapbox" id="mapbox">
+      <svg id="map" viewBox="0 0 960 500" role="img" aria-label="기록이 있는 국가를 표시한 세계 지도"></svg>
+      <div class="maptools">
+        <button type="button" id="zin" aria-label="확대">+</button>
+        <button type="button" id="zout" aria-label="축소">−</button>
+        <button type="button" id="zreset" aria-label="원래 크기">⟲</button>
+      </div>
+      <div class="legend"><span>기록 수</span><span class="ramp" id="ramp"></span><span id="rampmax">1+</span><span class="sw"></span><span>선택</span></div>
+      <div class="tip" id="tip"></div>
+    </div>
+    <aside class="card panel" id="panel" aria-live="polite"></aside>
+  </main>
+
+  <section class="all">
+    <h2>월별 전체 기록</h2>
+    <div class="card tablewrap">
+      <table>
+        <thead><tr><th>월</th><th>국가</th><th>종류</th><th>제목</th></tr></thead>
+        <tbody id="alltable"></tbody>
+      </table>
+    </div>
+  </section>
+</div>
+
+<footer><div class="wrap" id="foot"></div></footer>
+
+
+<div id="editor" role="dialog" aria-modal="true" aria-labelledby="ed-title">
+  <div class="ed">
+    <div class="row"><h2 id="ed-title">JTA6 편집</h2><button type="button" class="btn" id="ed-close">닫기</button></div>
+
+    <fieldset>
+      <legend>GitHub 연결 (저장할 때 필요)</legend>
+      <div class="grid2">
+        <label for="gh-owner">GitHub 아이디<input type="text" id="gh-owner" autocomplete="off" placeholder="예: jay-lee"></label>
+        <label for="gh-repo">저장소 이름<input type="text" id="gh-repo" autocomplete="off" placeholder="예: jta6"></label>
+        <label for="gh-branch">브랜치<input type="text" id="gh-branch" autocomplete="off" value="main"></label>
+        <label for="gh-token">토큰 (Fine-grained, Contents 읽기·쓰기)<input type="password" id="gh-token" autocomplete="off"></label>
+      </div>
+      <label class="check" for="gh-remember"><input type="checkbox" id="gh-remember" checked> 이 브라우저에 기억하기 (공용 PC에서는 끄세요)</label>
+    </fieldset>
+
+    <fieldset>
+      <legend>사이트 소개</legend>
+      <label for="m-tagline">한 줄 소개<input type="text" id="m-tagline"></label>
+      <label for="m-about">설명<textarea id="m-about"></textarea></label>
+      <div class="grid2">
+        <label for="m-contact">연락처 (선택)<input type="text" id="m-contact" placeholder="이메일 등"></label>
+        <label class="check" for="m-drafts"><input type="checkbox" id="m-drafts"> 방문자에게 초안도 보여 주기</label>
+      </div>
+      <label for="m-disclaimer">하단 안내문<textarea id="m-disclaimer"></textarea></label>
+    </fieldset>
+
+    <div class="row"><h3>기록</h3><button type="button" class="btn" id="ed-new">새 기록 추가</button></div>
+    <div class="list" id="ed-list"></div>
+
+    <fieldset id="ed-form" hidden>
+      <legend id="ed-form-title">기록 편집</legend>
+      <div class="grid2">
+        <label for="f-country">나라 (쉼표로 여러 개)<input type="text" id="f-country" list="country-list" placeholder="대한민국, 프랑스 또는 KOR, FRA"></label>
+        <label for="f-month">월<input type="month" id="f-month"></label>
+        <label for="f-type">종류<select id="f-type"></select></label>
+        <label for="f-status">상태<select id="f-status"><option value="final">완성</option><option value="draft">초안</option></select></label>
+      </div>
+      <div class="hint" id="f-country-check"></div>
+      <label for="f-title">제목<input type="text" id="f-title"></label>
+      <label for="f-credit">작성 구분 (개인/팀)<input type="text" id="f-credit" placeholder="예: 개인 작성 · 2026.11 월간 과제"></label>
+      <label for="f-summary">요약<textarea id="f-summary"></textarea></label>
+      <label for="f-points">핵심 포인트 (한 줄에 하나)<textarea id="f-points" style="min-height:110px"></textarea></label>
+      <label for="f-table">숫자 표 (한 줄에 하나: 항목 | 값 | 변화)<textarea id="f-table" placeholder="국고 3년 | 2.85% | +5bp"></textarea></label>
+      <label for="f-tablenote">표 기준일·메모<input type="text" id="f-tablenote" placeholder="2026.11.28 기준, 금투협"></label>
+      <label for="f-meaning">상품·고객 의미<textarea id="f-meaning"></textarea></label>
+      <label for="f-sources">출처 (한 줄에 하나: 이름 | 링크)<textarea id="f-sources" placeholder="Reuters (2026-11-18) | https://..."></textarea></label>
+      <div class="row"><span></span><span style="display:flex;gap:8px"><button type="button" class="btn" id="f-cancel">취소</button><button type="button" class="btn primary" id="f-apply">이 기록 반영</button></span></div>
+    </fieldset>
+
+    <div class="row">
+      <span class="status" id="ed-status" aria-live="polite"></span>
+      <span style="display:flex;gap:8px;flex-wrap:wrap">
+        <button type="button" class="btn" id="ed-copy">data.json 복사</button>
+        <button type="button" class="btn primary" id="ed-save">GitHub에 저장</button>
+      </span>
+    </div>
+    <p class="hint">저장하면 1~2분 뒤 사이트에 반영됩니다. 토큰은 GitHub에만 보내고, 이 브라우저 밖으로 저장하지 않습니다.</p>
+  </div>
+</div>
+<datalist id="country-list"></datalist>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/d3/7.9.0/d3.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/topojson/3.0.2/topojson.min.js"></script>
+<script>
+(async function(){
+  const $ = s => document.querySelector(s);
+  const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+  let data, topo, names;
+  try{
+    [data, topo, names] = await Promise.all(["data.json","world.json","countries-ko.json"].map(u => fetch(u === "data.json" ? "data.json?v=" + Date.now() : u, {cache: u === "data.json" ? "no-store" : "default"}).then(r => { if(!r.ok) throw new Error(u); return r.json(); })));
+  }catch(e){
+    $("#panel").innerHTML = '<p class="empty">데이터를 불러오지 못했습니다. 페이지를 새로고침해 주세요.</p>';
+    return;
+  }
+
+  const TYPES = data.types || {idea:"상품 아이디어", issue:"이슈", rate:"금리·환율"};
+  const byA3 = {}; // KOR -> {id, ko}
+  for(const [id, v] of Object.entries(names)) if(v.a3) byA3[v.a3.toUpperCase()] = {id, ko:v.ko, en:v.en};
+  const koOf = a3 => (byA3[a3] && byA3[a3].ko) || a3;
+  const monthLabel = m => { const [y, mo] = String(m).split("-"); return `${y}년 ${+mo}월`; };
+  let meta, entries;
+
+  function prep(){
+    meta = data.meta || {};
+    if(meta.owner) $("#owner").textContent = `by ${meta.owner}`;
+    if(meta.tagline) $("#tagline").textContent = meta.tagline;
+    $("#about").textContent = meta.about || "";
+    $("#foot").innerHTML = `<span>최종 업데이트 ${esc(meta.updated || "")}${meta.contact ? " · " + esc(meta.contact) : ""}</span>${meta.disclaimer ? `<span>${esc(meta.disclaimer)}</span>` : ""}<span><button type="button" class="editlink" id="openedit">편집</button></span>`;
+    $("#openedit").onclick = () => window.JTA_EDIT && window.JTA_EDIT.open();
+    document.title = meta.title || "JTA6";
+    entries = (data.entries || []).map(e => ({...e, country: [].concat(e.country || []).map(c => String(c).trim().toUpperCase()).filter(Boolean)}));
+    const months = [...new Set(entries.map(e => e.month))].sort().reverse();
+    const sel = $("#month"), cur = sel.value;
+    sel.innerHTML = '<option value="all">전체 기간</option>' + months.map(m => `<option value="${esc(m)}">${monthLabel(m)}</option>`).join("");
+    sel.value = months.includes(cur) ? cur : "all";
+  }
+  prep();
+
+  const state = {month:$("#month").value, types:new Set(Object.keys(TYPES)), drafts: meta.showDrafts !== false, sel:null};
+  $("#drafts").checked = state.drafts;
+
+  // type chips
+  for(const [k, label] of Object.entries(TYPES)){
+    const b = document.createElement("button");
+    b.type = "button"; b.className = "chip"; b.setAttribute("aria-pressed","true");
+    b.innerHTML = `<span class="dot ${k}"></span>${esc(label)}`;
+    b.onclick = () => { state.types.has(k) ? state.types.delete(k) : state.types.add(k); b.setAttribute("aria-pressed", state.types.has(k)); render(); };
+    $("#types").appendChild(b);
+  }
+  $("#month").onchange = e => { state.month = e.target.value; render(); };
+  $("#drafts").onchange = e => { state.drafts = e.target.checked; render(); };
+
+  const visible = () => entries.filter(e =>
+    (state.month === "all" || e.month === state.month) &&
+    state.types.has(e.type) && (state.drafts || e.status !== "draft"));
+
+  // map
+  const svg = d3.select("#map"), g = svg.append("g");
+  const features = topojson.feature(topo, topo.objects.countries).features;
+  const projection = d3.geoNaturalEarth1().fitExtent([[8,8],[952,492]], {type:"Sphere"});
+  const path = d3.geoPath(projection);
+  g.append("path").attr("class","sphere").attr("d", path({type:"Sphere"}));
+  const countries = g.selectAll("path.country").data(features).join("path")
+    .attr("class","country").attr("d", path)
+    .attr("data-a3", d => (names[d.id] && names[d.id].a3 || "").toUpperCase());
+  const zoom = d3.zoom().scaleExtent([1, 8]).translateExtent([[0,0],[960,500]])
+    .on("zoom", ev => g.attr("transform", ev.transform));
+  svg.call(zoom);
+  $("#zin").onclick = () => svg.transition().duration(250).call(zoom.scaleBy, 1.6);
+  $("#zout").onclick = () => svg.transition().duration(250).call(zoom.scaleBy, 1/1.6);
+  $("#zreset").onclick = () => svg.transition().duration(250).call(zoom.transform, d3.zoomIdentity);
+
+  const tip = $("#tip"), box = $("#mapbox");
+  countries.on("mousemove", (ev, d) => {
+    const a3 = (names[d.id] && names[d.id].a3 || "").toUpperCase();
+    const n = counts[a3] || 0;
+    const r = box.getBoundingClientRect();
+    tip.style.display = "block";
+    tip.textContent = `${(names[d.id] && names[d.id].ko) || d.properties.name}${n ? ` · 기록 ${n}` : ""}`;
+    tip.style.left = (ev.clientX - r.left + 12) + "px"; tip.style.top = (ev.clientY - r.top + 12) + "px";
+  }).on("mouseleave", () => tip.style.display = "none")
+    .on("click", (ev, d) => { const a3 = (names[d.id] && names[d.id].a3 || "").toUpperCase(); if(counts[a3]) go(a3); });
+
+  let counts = {};
+  function colorFor(n, max){
+    if(!n) return null;
+    const t = max <= 1 ? 1 : (n - 1) / (max - 1);
+    const cs = getComputedStyle(document.documentElement);
+    return d3.interpolateRgb(cs.getPropertyValue("--has-lo").trim(), cs.getPropertyValue("--has-hi").trim())(t);
+  }
+
+  function entryHTML(e){
+    const flags = e.country.map(c => `<span class="flag">${esc(koOf(c))}</span>`).join(" · ");
+    const pts = (e.points && e.points.length) ? `<ul>${e.points.map(p => `<li>${esc(p)}</li>`).join("")}</ul>` : "";
+    const hasCh = (e.table || []).some(r => r.change);
+    const tbl = (e.table && e.table.length) ? `<div class="tbl"><table><thead><tr><th>항목</th><th style="text-align:right">값</th>${hasCh ? '<th style="text-align:right">변화·비교</th>' : ""}</tr></thead><tbody>${
+      e.table.map(r => { const ch = String(r.change ?? ""); const cls = ch.startsWith("+") ? "up" : ch.startsWith("-") || ch.startsWith("−") ? "down" : "";
+        return `<tr><td>${esc(r.label)}</td><td class="num">${esc(r.value)}</td>${hasCh ? `<td class="num ${cls}">${esc(ch)}</td>` : ""}</tr>`; }).join("")}</tbody></table>${e.tableNote ? `<div class="note">${esc(e.tableNote)}</div>` : ""}</div>` : "";
+    const mean = e.meaning ? `<div class="meaning"><b>상품·고객 의미</b>${esc(e.meaning)}</div>` : "";
+    const src = (e.sources && e.sources.length) ? `<div class="src">출처: ${e.sources.map(s => s.url ? `<a href="${esc(s.url)}" target="_blank" rel="noopener">${esc(s.label)}</a>` : esc(s.label)).join(" · ")}</div>` : "";
+    return `<article class="entry ${esc(e.type)}">
+      <div class="meta"><span class="pill">${esc(TYPES[e.type] || e.type)}</span>${e.status === "draft" ? '<span class="badge">초안</span>' : ""}${state.sel ? "" : flags}</div>
+      <h3>${esc(e.title)}</h3>${e.credit ? `<div class="credit">${esc(e.credit)}</div>` : ""}${e.summary ? `<p>${esc(e.summary)}</p>` : ""}${pts}${tbl}${mean}${src}</article>`;
+  }
+
+  function groupByMonth(list){
+    const out = {};
+    for(const e of list) (out[e.month] = out[e.month] || []).push(e);
+    return Object.keys(out).sort().reverse().map((m, i) => `<div class="month${i ? "" : " first"}">${monthLabel(m)}</div>${out[m].map(entryHTML).join("")}`).join("");
+  }
+
+  function renderPanel(list){
+    const p = $("#panel");
+    if(state.sel){
+      const mine = list.filter(e => e.country.includes(state.sel));
+      p.innerHTML = `<button class="back" type="button" id="back">← 전체 보기</button>
+        <h2>${esc(koOf(state.sel))}</h2><p class="sub">${esc(state.sel)} · 기록 ${mine.length}건</p>
+        ${mine.length ? groupByMonth(mine) : '<p class="empty">선택한 조건에 맞는 기록이 없습니다. 월이나 종류 필터를 바꿔 보세요.</p>'}`;
+      $("#back").onclick = () => go(null);
+    } else {
+      const ranked = Object.entries(counts).sort((a,b) => b[1] - a[1]);
+      p.innerHTML = `<h2>국가를 선택하세요</h2><p class="sub">색이 칠해진 나라에 기록이 있습니다</p>
+        <div class="clist">${ranked.map(([a3,n]) => `<button type="button" data-a3="${a3}">${esc(koOf(a3))}<b>${n}</b></button>`).join("") || '<span class="empty">선택한 조건에 맞는 기록이 없습니다.</span>'}</div>
+        <div class="month" style="margin-top:22px">최근 기록</div>
+        ${list.slice().sort((a,b) => b.month.localeCompare(a.month)).slice(0,3).map(entryHTML).join("")}`;
+      p.querySelectorAll(".clist button").forEach(b => b.onclick = () => go(b.dataset.a3));
+    }
+  }
+
+  function render(){
+    const list = visible();
+    counts = {};
+    for(const e of list) for(const c of e.country) counts[c] = (counts[c] || 0) + 1;
+    const max = Math.max(1, ...Object.values(counts));
+    countries.each(function(){
+      const a3 = this.getAttribute("data-a3"); const n = counts[a3] || 0;
+      this.style.fill = colorFor(n, max) || "";
+      this.classList.toggle("has", !!n);
+      this.classList.toggle("sel", a3 === state.sel);
+    });
+    $("#ramp").innerHTML = [1, .66, .33, 0].reverse().map(t => `<i style="background:${colorFor(max <= 1 ? 1 : 1 + t * (max - 1), max)}"></i>`).join("");
+    $("#rampmax").textContent = max > 1 ? `${max}` : "1+";
+    $("#s-countries").textContent = Object.keys(counts).length;
+    $("#s-entries").textContent = list.length;
+    $("#s-months").textContent = new Set(list.map(e => e.month)).size;
+    renderPanel(list);
+    $("#alltable").innerHTML = list.slice().sort((a,b) => b.month.localeCompare(a.month)).map(e =>
+      `<tr class="row" data-a3="${e.country[0]}"><td style="font-family:var(--mono);white-space:nowrap">${esc(e.month)}</td><td>${esc(e.country.map(koOf).join(", "))}</td><td><span class="dot ${esc(e.type)}"></span> ${esc(TYPES[e.type] || e.type)}${e.status === "draft" ? ' <span class="badge">초안</span>' : ""}</td><td>${esc(e.title)}</td></tr>`
+    ).join("") || '<tr><td colspan="4" class="empty">선택한 조건에 맞는 기록이 없습니다.</td></tr>';
+    document.querySelectorAll("#alltable tr.row").forEach(r => r.onclick = () => { go(r.dataset.a3); $("#mapbox").scrollIntoView({behavior:"smooth", block:"start"}); });
+  }
+
+  function go(a3){
+    state.sel = a3;
+    try{ if(a3) location.hash = a3.toLowerCase(); else history.replaceState(null, "", location.pathname + location.search); }catch(e){}
+    render();
+  }
+  function fromHash(){
+    const h = (location.hash || "").slice(1).toUpperCase();
+    state.sel = h && byA3[h] ? h : null; render();
+  }
+  window.addEventListener("hashchange", fromHash);
+  window.JTA = { data, names, byA3, koOf, TYPES, refresh(){ prep(); state.month = $("#month").value; render(); } };
+  fromHash();
+})();
+</script>
+
+<script>
+(function(){
+  const $ = s => document.querySelector(s);
+  const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+  const store = { get(k){ try{ return localStorage.getItem(k) || ""; }catch(e){ return ""; } }, set(k,v){ try{ v ? localStorage.setItem(k,v) : localStorage.removeItem(k); }catch(e){} } };
+  let editing = null; // index or -1 for new
+  const status = (msg, cls) => { const el = $("#ed-status"); el.textContent = msg; el.className = "status " + (cls || ""); };
+
+  function J(){ return window.JTA; }
+  function guessRepo(){
+    const h = location.hostname;
+    if(h.endsWith(".github.io")){
+      return { owner: h.split(".")[0], repo: location.pathname.split("/").filter(Boolean)[0] || h };
+    }
+    return {};
+  }
+  function loadSettings(){
+    const g = guessRepo();
+    $("#gh-owner").value = store.get("jta6.owner") || g.owner || "";
+    $("#gh-repo").value = store.get("jta6.repo") || g.repo || "";
+    $("#gh-branch").value = store.get("jta6.branch") || "main";
+    $("#gh-token").value = store.get("jta6.token");
+  }
+  function saveSettings(){
+    const keep = $("#gh-remember").checked;
+    store.set("jta6.owner", $("#gh-owner").value.trim());
+    store.set("jta6.repo", $("#gh-repo").value.trim());
+    store.set("jta6.branch", $("#gh-branch").value.trim());
+    store.set("jta6.token", keep ? $("#gh-token").value.trim() : "");
+  }
+
+  function resolveCountries(text){
+    const {byA3} = J(); const ok = [], bad = [];
+    for(const raw of text.split(",").map(t => t.trim()).filter(Boolean)){
+      const m = raw.match(/\(([A-Za-z]{3})\)\s*$/);
+      const up = (m ? m[1] : raw).toUpperCase();
+      if(byA3[up]){ ok.push(up); continue; }
+      const hit = Object.entries(byA3).find(([, v]) => v.ko === raw || (v.en || "").toLowerCase() === raw.toLowerCase());
+      hit ? ok.push(hit[0]) : bad.push(raw);
+    }
+    return {ok:[...new Set(ok)], bad};
+  }
+  function checkCountries(){
+    const {ok, bad} = resolveCountries($("#f-country").value); const {koOf} = J();
+    $("#f-country-check").textContent = (ok.length ? "지도에 표시: " + ok.map(c => `${koOf(c)}(${c})`).join(", ") : "") + (bad.length ? `  ·  못 찾은 이름: ${bad.join(", ")}` : "");
+  }
+
+  function renderList(){
+    const {data, koOf, TYPES} = J();
+    const list = (data.entries || []).map((e, i) => ({e, i})).sort((a, b) => String(b.e.month).localeCompare(String(a.e.month)));
+    $("#ed-list").innerHTML = list.map(({e, i}) => `<div class="item"><div><span class="m">${esc(e.month)}</span>${esc([].concat(e.country || []).map(koOf).join(", "))} · ${esc(TYPES[e.type] || e.type)}${e.status === "draft" ? " · 초안" : ""}<br><b>${esc(e.title)}</b></div><div class="acts"><button type="button" class="btn" data-edit="${i}">수정</button><button type="button" class="btn danger" data-del="${i}">삭제</button></div></div>`).join("") || '<p class="hint">기록이 없습니다.</p>';
+    $("#ed-list").querySelectorAll("[data-edit]").forEach(b => b.onclick = () => openForm(+b.dataset.edit));
+    $("#ed-list").querySelectorAll("[data-del]").forEach(b => b.onclick = () => {
+      const e = J().data.entries[+b.dataset.del];
+      if(b.dataset.armed){ J().data.entries.splice(+b.dataset.del, 1); J().refresh(); renderList(); status("삭제했습니다. 'GitHub에 저장'을 눌러야 사이트에 반영됩니다."); }
+      else { b.dataset.armed = "1"; b.textContent = "한 번 더 눌러 삭제"; status(`'${e.title}' 삭제하려면 한 번 더 누르세요.`); }
+    });
+  }
+
+  function openForm(i){
+    const {data, koOf} = J(); editing = i;
+    const e = i >= 0 ? data.entries[i] : {country:[], month:new Date().toISOString().slice(0,7), type:"idea", status:"draft", points:[], table:[], sources:[]};
+    $("#ed-form").hidden = false;
+    $("#ed-form-title").textContent = i >= 0 ? "기록 수정" : "새 기록";
+    $("#f-country").value = [].concat(e.country || []).map(c => koOf(String(c).toUpperCase())).join(", ");
+    $("#f-month").value = e.month || "";
+    $("#f-type").value = e.type || "idea";
+    $("#f-status").value = e.status || "final";
+    $("#f-title").value = e.title || "";
+    $("#f-credit").value = e.credit || "";
+    $("#f-summary").value = e.summary || "";
+    $("#f-points").value = (e.points || []).join("\n");
+    $("#f-table").value = (e.table || []).map(r => [r.label, r.value, r.change].filter((x, k) => k < 2 || x).join(" | ")).join("\n");
+    $("#f-tablenote").value = e.tableNote || "";
+    $("#f-meaning").value = e.meaning || "";
+    $("#f-sources").value = (e.sources || []).map(s => s.url ? `${s.label} | ${s.url}` : s.label).join("\n");
+    checkCountries();
+    $("#ed-form").scrollIntoView({behavior:"smooth", block:"start"});
+  }
+
+  function applyForm(){
+    const {data} = J();
+    const {ok, bad} = resolveCountries($("#f-country").value);
+    if(!ok.length || bad.length){ status(bad.length ? `나라 이름을 확인해 주세요: ${bad.join(", ")}` : "나라를 하나 이상 입력해 주세요.", "err"); return; }
+    if(!$("#f-month").value || !$("#f-title").value.trim()){ status("월과 제목은 꼭 필요합니다.", "err"); return; }
+    const lines = id => $(id).value.split("\n").map(t => t.trim()).filter(Boolean);
+    const old = editing >= 0 ? data.entries[editing] : {};
+    const e = {
+      ...old,
+      id: old.id || `${$("#f-month").value}-${ok[0].toLowerCase()}-${Date.now().toString(36)}`,
+      country: ok, month: $("#f-month").value, type: $("#f-type").value, status: $("#f-status").value,
+      credit: $("#f-credit").value.trim(), title: $("#f-title").value.trim(), summary: $("#f-summary").value.trim(),
+      points: lines("#f-points"),
+      table: lines("#f-table").map(l => { const [label, value = "", change = ""] = l.split("|").map(x => x.trim()); return {label, value, change}; }),
+      tableNote: $("#f-tablenote").value.trim(), meaning: $("#f-meaning").value.trim(),
+      sources: lines("#f-sources").map(l => { const k = l.lastIndexOf("|"); return k > 0 && /^https?:\/\//.test(l.slice(k + 1).trim()) ? {label: l.slice(0, k).trim(), url: l.slice(k + 1).trim()} : {label: l, url: ""}; })
+    };
+    if(editing >= 0) data.entries[editing] = e; else (data.entries = data.entries || []).push(e);
+    $("#ed-form").hidden = true; editing = null;
+    J().refresh(); renderList();
+    status("반영했습니다. 'GitHub에 저장'을 눌러야 사이트에 올라갑니다.", "ok");
+  }
+
+  function applyMeta(){
+    const m = J().data.meta = J().data.meta || {};
+    m.tagline = $("#m-tagline").value.trim(); m.about = $("#m-about").value.trim();
+    m.contact = $("#m-contact").value.trim(); m.disclaimer = $("#m-disclaimer").value.trim();
+    m.showDrafts = $("#m-drafts").checked;
+    const d = new Date(); m.updated = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`;
+  }
+  const json = () => JSON.stringify(J().data, null, 2) + "\n";
+  function b64(str){ const bytes = new TextEncoder().encode(str); let bin = ""; for(let i = 0; i < bytes.length; i += 0x8000) bin += String.fromCharCode.apply(null, bytes.subarray(i, i + 0x8000)); return btoa(bin); }
+
+  async function save(){
+    applyMeta(); saveSettings();
+    const owner = $("#gh-owner").value.trim(), repo = $("#gh-repo").value.trim(), branch = $("#gh-branch").value.trim() || "main", token = $("#gh-token").value.trim();
+    if(!owner || !repo || !token){ status("GitHub 아이디, 저장소 이름, 토큰을 먼저 입력해 주세요.", "err"); return; }
+    const api = `https://api.github.com/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/contents/data.json`;
+    const headers = {Authorization: `Bearer ${token}`, Accept: "application/vnd.github+json"};
+    status("저장 중…");
+    try{
+      const cur = await fetch(`${api}?ref=${encodeURIComponent(branch)}`, {headers, cache:"no-store"});
+      if(cur.status === 401) throw new Error("토큰이 맞지 않거나 만료됐습니다.");
+      if(cur.status === 404) throw new Error("저장소나 data.json을 찾지 못했습니다. 아이디·저장소 이름·토큰 권한을 확인해 주세요.");
+      const sha = cur.ok ? (await cur.json()).sha : undefined;
+      const res = await fetch(api, {method:"PUT", headers, body: JSON.stringify({message:`JTA6 기록 업데이트 (${J().data.meta.updated})`, content: b64(json()), sha, branch})});
+      if(!res.ok){ const t = await res.json().catch(() => ({})); throw new Error(res.status === 403 ? "토큰에 Contents 쓰기 권한이 없습니다." : (t.message || `오류 ${res.status}`)); }
+      J().refresh();
+      status("저장했습니다. 1~2분 뒤 사이트에 반영됩니다.", "ok");
+    }catch(err){ status(`저장하지 못했습니다: ${err.message}`, "err"); }
+  }
+
+  function open(){
+    if(!J()) return;
+    const {data, byA3, TYPES} = J(); const m = data.meta || {};
+    loadSettings();
+    $("#m-tagline").value = m.tagline || ""; $("#m-about").value = m.about || "";
+    $("#m-contact").value = m.contact || ""; $("#m-disclaimer").value = m.disclaimer || "";
+    $("#m-drafts").checked = m.showDrafts !== false;
+    $("#f-type").innerHTML = Object.entries(TYPES).map(([k, v]) => `<option value="${k}">${esc(v)}</option>`).join("");
+    $("#country-list").innerHTML = Object.entries(byA3).sort((a, b) => a[1].ko.localeCompare(b[1].ko, "ko")).map(([c, v]) => `<option value="${esc(v.ko)}">${c}</option>`).join("");
+    $("#ed-form").hidden = true; status("");
+    renderList();
+    $("#editor").classList.add("open");
+    try{ if(location.hash !== "#edit") history.replaceState(null, "", "#edit"); }catch(e){}
+  }
+  function close(){ $("#editor").classList.remove("open"); try{ history.replaceState(null, "", location.pathname + location.search); }catch(e){} }
+
+  $("#ed-close").onclick = close;
+  $("#ed-new").onclick = () => openForm(-1);
+  $("#f-cancel").onclick = () => { $("#ed-form").hidden = true; editing = null; };
+  $("#f-apply").onclick = applyForm;
+  $("#f-country").addEventListener("input", checkCountries);
+  $("#ed-save").onclick = save;
+  $("#ed-copy").onclick = async () => { applyMeta(); try{ await navigator.clipboard.writeText(json()); status("data.json 내용을 복사했습니다. GitHub의 data.json에 붙여넣어 저장하면 됩니다.", "ok"); }catch(e){ status("복사하지 못했습니다. 브라우저 권한을 확인해 주세요.", "err"); } };
+  document.addEventListener("keydown", e => { if(e.key === "Escape" && $("#editor").classList.contains("open")) close(); });
+  window.JTA_EDIT = { open };
+  const tryHash = () => { if(location.hash === "#edit"){ if(J()) open(); else setTimeout(tryHash, 200); } };
+  tryHash();
+})();
+</script>
+</body>
+</html>
