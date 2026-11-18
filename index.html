@@ -134,6 +134,9 @@ footer .wrap{display:grid;gap:4px}
 .ed .status{font-size:13px;min-height:1.4em}
 .ed .status.ok{color:var(--rate)} .ed .status.err{color:#e58a7a}
 .ed .check{display:flex;gap:6px;align-items:center;color:var(--ink)}
+.lockbox{display:grid;gap:12px;max-width:520px}
+#ed-main{display:grid;gap:18px}
+#ed-main[hidden],.lockbox[hidden]{display:none}
 </style>
 </head>
 <body>
@@ -192,17 +195,26 @@ footer .wrap{display:grid;gap:4px}
   <div class="ed">
     <div class="row"><h2 id="ed-title">JTA6 편집</h2><button type="button" class="btn" id="ed-close">닫기</button></div>
 
-    <fieldset>
-      <legend>GitHub 연결 (저장할 때 필요)</legend>
-      <div class="grid2">
-        <label for="gh-owner">GitHub 아이디<input type="text" id="gh-owner" autocomplete="off" placeholder="예: jay-lee"></label>
-        <label for="gh-repo">저장소 이름<input type="text" id="gh-repo" autocomplete="off" placeholder="예: jta6"></label>
-        <label for="gh-branch">브랜치<input type="text" id="gh-branch" autocomplete="off" value="main"></label>
-        <label for="gh-token">토큰 (Fine-grained, Contents 읽기·쓰기)<input type="password" id="gh-token" autocomplete="off"></label>
-      </div>
-      <label class="check" for="gh-remember"><input type="checkbox" id="gh-remember" checked> 이 브라우저에 기억하기 (공용 PC에서는 끄세요)</label>
-    </fieldset>
+    <form id="ed-lock" class="lockbox" autocomplete="off">
+      <label for="lk-pass">비밀번호<input type="password" id="lk-pass" autocomplete="current-password"></label>
+      <div class="row"><button type="button" class="editlink" id="lk-setup-open">처음 설정 / 토큰 다시 등록</button><button type="submit" class="btn primary">편집 시작</button></div>
+    </form>
 
+    <form id="ed-setup" class="lockbox" hidden autocomplete="off">
+      <p class="hint">처음 한 번만 하면 됩니다. GitHub 토큰을 아래 비밀번호로 암호화해 저장소에 넣어 두고, 다음부터는 비밀번호만 입력합니다.</p>
+      <div class="grid2">
+        <label for="gh-owner">GitHub 아이디<input type="text" id="gh-owner" autocomplete="off"></label>
+        <label for="gh-repo">저장소 이름<input type="text" id="gh-repo" autocomplete="off"></label>
+      </div>
+      <label for="gh-token">GitHub 토큰 (Fine-grained, 이 저장소 Contents 읽기·쓰기)<input type="password" id="gh-token" autocomplete="off"></label>
+      <div class="grid2">
+        <label for="st-pass">사용할 비밀번호<input type="password" id="st-pass" autocomplete="new-password"></label>
+        <label for="st-pass2">비밀번호 확인<input type="password" id="st-pass2" autocomplete="new-password"></label>
+      </div>
+      <div class="row"><button type="button" class="btn" id="st-cancel">취소</button><button type="submit" class="btn primary">설정 저장</button></div>
+    </form>
+
+    <div id="ed-main" hidden>
     <fieldset>
       <legend>사이트 소개</legend>
       <label for="m-tagline">한 줄 소개<input type="text" id="m-tagline"></label>
@@ -238,13 +250,15 @@ footer .wrap{display:grid;gap:4px}
     </fieldset>
 
     <div class="row">
-      <span class="status" id="ed-status" aria-live="polite"></span>
+      <span></span>
       <span style="display:flex;gap:8px;flex-wrap:wrap">
         <button type="button" class="btn" id="ed-copy">data.json 복사</button>
         <button type="button" class="btn primary" id="ed-save">GitHub에 저장</button>
       </span>
     </div>
-    <p class="hint">저장하면 1~2분 뒤 사이트에 반영됩니다. 토큰은 GitHub에만 보내고, 이 브라우저 밖으로 저장하지 않습니다.</p>
+    <p class="hint">저장하면 1~2분 뒤 사이트에 반영됩니다.</p>
+    </div>
+    <span class="status" id="ed-status" aria-live="polite"></span>
   </div>
 </div>
 <datalist id="country-list"></datalist>
@@ -418,38 +432,100 @@ footer .wrap{display:grid;gap:4px}
 (function(){
   const $ = s => document.querySelector(s);
   const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
-  const store = { get(k){ try{ return localStorage.getItem(k) || ""; }catch(e){ return ""; } }, set(k,v){ try{ v ? localStorage.setItem(k,v) : localStorage.removeItem(k); }catch(e){} } };
-  let editing = null; // index or -1 for new
+  const KEYFILE = "edit-key.json";
+  let creds = null;   // {owner, repo, branch, token} — 잠금 해제 후 메모리에만
+  let editing = null;
   const status = (msg, cls) => { const el = $("#ed-status"); el.textContent = msg; el.className = "status " + (cls || ""); };
+  const J = () => window.JTA;
 
-  function J(){ return window.JTA; }
+  // ---------- 암호화 (PBKDF2 + AES-GCM) ----------
+  const enc = new TextEncoder(), dec = new TextDecoder();
+  const toB64 = buf => { const b = new Uint8Array(buf); let s = ""; for(let i = 0; i < b.length; i += 0x8000) s += String.fromCharCode.apply(null, b.subarray(i, i + 0x8000)); return btoa(s); };
+  const fromB64 = str => Uint8Array.from(atob(str), c => c.charCodeAt(0));
+  async function deriveKey(pass, salt, iter){
+    const base = await crypto.subtle.importKey("raw", enc.encode(pass), "PBKDF2", false, ["deriveKey"]);
+    return crypto.subtle.deriveKey({name:"PBKDF2", salt, iterations:iter, hash:"SHA-256"}, base, {name:"AES-GCM", length:256}, false, ["encrypt","decrypt"]);
+  }
+  async function seal(obj, pass){
+    const salt = crypto.getRandomValues(new Uint8Array(16)), iv = crypto.getRandomValues(new Uint8Array(12)), iter = 600000;
+    const key = await deriveKey(pass, salt, iter);
+    const ct = await crypto.subtle.encrypt({name:"AES-GCM", iv}, key, enc.encode(JSON.stringify(obj)));
+    return {v:1, iter, salt:toB64(salt), iv:toB64(iv), ct:toB64(ct)};
+  }
+  async function unseal(box, pass){
+    const key = await deriveKey(pass, fromB64(box.salt), box.iter);
+    const pt = await crypto.subtle.decrypt({name:"AES-GCM", iv:fromB64(box.iv)}, key, fromB64(box.ct));
+    return JSON.parse(dec.decode(pt));
+  }
+  const b64utf8 = str => toB64(enc.encode(str));
+
+  // ---------- GitHub ----------
   function guessRepo(){
     const h = location.hostname;
-    if(h.endsWith(".github.io")){
-      return { owner: h.split(".")[0], repo: location.pathname.split("/").filter(Boolean)[0] || h };
+    if(h.endsWith(".github.io")) return {owner:h.split(".")[0], repo:location.pathname.split("/").filter(Boolean)[0] || h};
+    return {owner:"", repo:""};
+  }
+  async function ghPut(c, path, text, message){
+    const api = `https://api.github.com/repos/${encodeURIComponent(c.owner)}/${encodeURIComponent(c.repo)}/contents/${path}`;
+    const headers = {Authorization:`Bearer ${c.token}`, Accept:"application/vnd.github+json"};
+    const cur = await fetch(`${api}?ref=${encodeURIComponent(c.branch)}`, {headers, cache:"no-store"});
+    if(cur.status === 401) throw new Error("토큰이 맞지 않거나 만료됐습니다. '처음 설정 / 토큰 다시 등록'으로 새 토큰을 넣어 주세요.");
+    if(cur.status === 403) throw new Error("토큰에 이 저장소 권한이 없습니다.");
+    if(!cur.ok && cur.status !== 404) throw new Error(`GitHub 오류 ${cur.status}`);
+    const sha = cur.ok ? (await cur.json()).sha : undefined;
+    const res = await fetch(api, {method:"PUT", headers, body:JSON.stringify({message, content:b64utf8(text), sha, branch:c.branch})});
+    if(!res.ok){
+      const t = await res.json().catch(() => ({}));
+      if(res.status === 404) throw new Error("저장소를 찾지 못했거나 토큰에 Contents 쓰기 권한이 없습니다.");
+      if(res.status === 403) throw new Error("토큰에 Contents 쓰기 권한이 없습니다.");
+      throw new Error(t.message || `GitHub 오류 ${res.status}`);
     }
-    return {};
-  }
-  function loadSettings(){
-    const g = guessRepo();
-    $("#gh-owner").value = store.get("jta6.owner") || g.owner || "";
-    $("#gh-repo").value = store.get("jta6.repo") || g.repo || "";
-    $("#gh-branch").value = store.get("jta6.branch") || "main";
-    $("#gh-token").value = store.get("jta6.token");
-  }
-  function saveSettings(){
-    const keep = $("#gh-remember").checked;
-    store.set("jta6.owner", $("#gh-owner").value.trim());
-    store.set("jta6.repo", $("#gh-repo").value.trim());
-    store.set("jta6.branch", $("#gh-branch").value.trim());
-    store.set("jta6.token", keep ? $("#gh-token").value.trim() : "");
   }
 
+  // ---------- 잠금 / 설정 ----------
+  function showLock(){ $("#ed-lock").hidden = false; $("#ed-setup").hidden = true; $("#ed-main").hidden = true; setTimeout(() => $("#lk-pass").focus(), 50); }
+  function showSetup(){
+    const g = guessRepo();
+    $("#gh-owner").value = $("#gh-owner").value || g.owner;
+    $("#gh-repo").value = $("#gh-repo").value || g.repo;
+    $("#ed-lock").hidden = true; $("#ed-setup").hidden = false; $("#ed-main").hidden = true; status("");
+  }
+  function showMain(){ $("#ed-lock").hidden = true; $("#ed-setup").hidden = true; $("#ed-main").hidden = false; fillMain(); }
+
+  $("#ed-lock").addEventListener("submit", async ev => {
+    ev.preventDefault();
+    const pass = $("#lk-pass").value;
+    if(!pass){ status("비밀번호를 입력해 주세요.", "err"); return; }
+    status("확인 중…");
+    let box;
+    try{ const r = await fetch(`${KEYFILE}?v=${Date.now()}`, {cache:"no-store"}); if(!r.ok) throw 0; box = await r.json(); }
+    catch(e){ status("아직 처음 설정을 하지 않았습니다. '처음 설정'을 눌러 주세요.", "err"); return; }
+    try{ creds = await unseal(box, pass); $("#lk-pass").value = ""; status("잠금을 풀었습니다.", "ok"); showMain(); }
+    catch(e){ status("비밀번호가 맞지 않습니다.", "err"); }
+  });
+  $("#lk-setup-open").onclick = showSetup;
+  $("#st-cancel").onclick = () => { status(""); showLock(); };
+  $("#ed-setup").addEventListener("submit", async ev => {
+    ev.preventDefault();
+    const c = {owner:$("#gh-owner").value.trim(), repo:$("#gh-repo").value.trim(), branch:"main", token:$("#gh-token").value.trim()};
+    const p1 = $("#st-pass").value, p2 = $("#st-pass2").value;
+    if(!c.owner || !c.repo || !c.token){ status("GitHub 아이디, 저장소 이름, 토큰을 모두 입력해 주세요.", "err"); return; }
+    if(p1.length < 8){ status("비밀번호는 8자 이상으로 해 주세요.", "err"); return; }
+    if(p1 !== p2){ status("비밀번호 두 칸이 서로 다릅니다.", "err"); return; }
+    status("저장소에 설정을 저장하는 중…");
+    try{
+      const box = await seal(c, p1);
+      await ghPut(c, KEYFILE, JSON.stringify(box, null, 2) + "\n", "JTA6 편집 설정 저장");
+      creds = c; ["#gh-token","#st-pass","#st-pass2"].forEach(id => $(id).value = "");
+      status("설정했습니다. 다음부터는 비밀번호만 입력하면 됩니다.", "ok"); showMain();
+    }catch(err){ status(`설정하지 못했습니다: ${err.message}`, "err"); }
+  });
+
+  // ---------- 기록 편집 ----------
   function resolveCountries(text){
     const {byA3} = J(); const ok = [], bad = [];
     for(const raw of text.split(",").map(t => t.trim()).filter(Boolean)){
-      const m = raw.match(/\(([A-Za-z]{3})\)\s*$/);
-      const up = (m ? m[1] : raw).toUpperCase();
+      const up = raw.toUpperCase();
       if(byA3[up]){ ok.push(up); continue; }
       const hit = Object.entries(byA3).find(([, v]) => v.ko === raw || (v.en || "").toLowerCase() === raw.toLowerCase());
       hit ? ok.push(hit[0]) : bad.push(raw);
@@ -460,7 +536,6 @@ footer .wrap{display:grid;gap:4px}
     const {ok, bad} = resolveCountries($("#f-country").value); const {koOf} = J();
     $("#f-country-check").textContent = (ok.length ? "지도에 표시: " + ok.map(c => `${koOf(c)}(${c})`).join(", ") : "") + (bad.length ? `  ·  못 찾은 이름: ${bad.join(", ")}` : "");
   }
-
   function renderList(){
     const {data, koOf, TYPES} = J();
     const list = (data.entries || []).map((e, i) => ({e, i})).sort((a, b) => String(b.e.month).localeCompare(String(a.e.month)));
@@ -469,10 +544,9 @@ footer .wrap{display:grid;gap:4px}
     $("#ed-list").querySelectorAll("[data-del]").forEach(b => b.onclick = () => {
       const e = J().data.entries[+b.dataset.del];
       if(b.dataset.armed){ J().data.entries.splice(+b.dataset.del, 1); J().refresh(); renderList(); status("삭제했습니다. 'GitHub에 저장'을 눌러야 사이트에 반영됩니다."); }
-      else { b.dataset.armed = "1"; b.textContent = "한 번 더 눌러 삭제"; status(`'${e.title}' 삭제하려면 한 번 더 누르세요.`); }
+      else { b.dataset.armed = "1"; b.textContent = "한 번 더 눌러 삭제"; status(`'${e.title}'을(를) 지우려면 한 번 더 누르세요.`); }
     });
   }
-
   function openForm(i){
     const {data, koOf} = J(); editing = i;
     const e = i >= 0 ? data.entries[i] : {country:[], month:new Date().toISOString().slice(0,7), type:"idea", status:"draft", points:[], table:[], sources:[]};
@@ -493,7 +567,6 @@ footer .wrap{display:grid;gap:4px}
     checkCountries();
     $("#ed-form").scrollIntoView({behavior:"smooth", block:"start"});
   }
-
   function applyForm(){
     const {data} = J();
     const {ok, bad} = resolveCountries($("#f-country").value);
@@ -509,14 +582,13 @@ footer .wrap{display:grid;gap:4px}
       points: lines("#f-points"),
       table: lines("#f-table").map(l => { const [label, value = "", change = ""] = l.split("|").map(x => x.trim()); return {label, value, change}; }),
       tableNote: $("#f-tablenote").value.trim(), meaning: $("#f-meaning").value.trim(),
-      sources: lines("#f-sources").map(l => { const k = l.lastIndexOf("|"); return k > 0 && /^https?:\/\//.test(l.slice(k + 1).trim()) ? {label: l.slice(0, k).trim(), url: l.slice(k + 1).trim()} : {label: l, url: ""}; })
+      sources: lines("#f-sources").map(l => { const k = l.lastIndexOf("|"); return k > 0 && /^https?:\/\//.test(l.slice(k + 1).trim()) ? {label:l.slice(0, k).trim(), url:l.slice(k + 1).trim()} : {label:l, url:""}; })
     };
     if(editing >= 0) data.entries[editing] = e; else (data.entries = data.entries || []).push(e);
     $("#ed-form").hidden = true; editing = null;
     J().refresh(); renderList();
     status("반영했습니다. 'GitHub에 저장'을 눌러야 사이트에 올라갑니다.", "ok");
   }
-
   function applyMeta(){
     const m = J().data.meta = J().data.meta || {};
     m.tagline = $("#m-tagline").value.trim(); m.about = $("#m-about").value.trim();
@@ -525,38 +597,27 @@ footer .wrap{display:grid;gap:4px}
     const d = new Date(); m.updated = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`;
   }
   const json = () => JSON.stringify(J().data, null, 2) + "\n";
-  function b64(str){ const bytes = new TextEncoder().encode(str); let bin = ""; for(let i = 0; i < bytes.length; i += 0x8000) bin += String.fromCharCode.apply(null, bytes.subarray(i, i + 0x8000)); return btoa(bin); }
-
-  async function save(){
-    applyMeta(); saveSettings();
-    const owner = $("#gh-owner").value.trim(), repo = $("#gh-repo").value.trim(), branch = $("#gh-branch").value.trim() || "main", token = $("#gh-token").value.trim();
-    if(!owner || !repo || !token){ status("GitHub 아이디, 저장소 이름, 토큰을 먼저 입력해 주세요.", "err"); return; }
-    const api = `https://api.github.com/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/contents/data.json`;
-    const headers = {Authorization: `Bearer ${token}`, Accept: "application/vnd.github+json"};
-    status("저장 중…");
-    try{
-      const cur = await fetch(`${api}?ref=${encodeURIComponent(branch)}`, {headers, cache:"no-store"});
-      if(cur.status === 401) throw new Error("토큰이 맞지 않거나 만료됐습니다.");
-      if(cur.status === 404) throw new Error("저장소나 data.json을 찾지 못했습니다. 아이디·저장소 이름·토큰 권한을 확인해 주세요.");
-      const sha = cur.ok ? (await cur.json()).sha : undefined;
-      const res = await fetch(api, {method:"PUT", headers, body: JSON.stringify({message:`JTA6 기록 업데이트 (${J().data.meta.updated})`, content: b64(json()), sha, branch})});
-      if(!res.ok){ const t = await res.json().catch(() => ({})); throw new Error(res.status === 403 ? "토큰에 Contents 쓰기 권한이 없습니다." : (t.message || `오류 ${res.status}`)); }
-      J().refresh();
-      status("저장했습니다. 1~2분 뒤 사이트에 반영됩니다.", "ok");
-    }catch(err){ status(`저장하지 못했습니다: ${err.message}`, "err"); }
-  }
-
-  function open(){
-    if(!J()) return;
+  function fillMain(){
     const {data, byA3, TYPES} = J(); const m = data.meta || {};
-    loadSettings();
     $("#m-tagline").value = m.tagline || ""; $("#m-about").value = m.about || "";
     $("#m-contact").value = m.contact || ""; $("#m-disclaimer").value = m.disclaimer || "";
     $("#m-drafts").checked = m.showDrafts !== false;
     $("#f-type").innerHTML = Object.entries(TYPES).map(([k, v]) => `<option value="${k}">${esc(v)}</option>`).join("");
     $("#country-list").innerHTML = Object.entries(byA3).sort((a, b) => a[1].ko.localeCompare(b[1].ko, "ko")).map(([c, v]) => `<option value="${esc(v.ko)}">${c}</option>`).join("");
-    $("#ed-form").hidden = true; status("");
+    $("#ed-form").hidden = true;
     renderList();
+  }
+  async function save(){
+    if(!creds){ showLock(); return; }
+    applyMeta(); status("저장 중…");
+    try{ await ghPut(creds, "data.json", json(), `JTA6 기록 업데이트 (${J().data.meta.updated})`); J().refresh(); status("저장했습니다. 1~2분 뒤 사이트에 반영됩니다.", "ok"); }
+    catch(err){ status(`저장하지 못했습니다: ${err.message}`, "err"); }
+  }
+
+  function open(){
+    if(!J()) return;
+    status("");
+    creds ? showMain() : showLock();
     $("#editor").classList.add("open");
     try{ if(location.hash !== "#edit") history.replaceState(null, "", "#edit"); }catch(e){}
   }
@@ -568,7 +629,7 @@ footer .wrap{display:grid;gap:4px}
   $("#f-apply").onclick = applyForm;
   $("#f-country").addEventListener("input", checkCountries);
   $("#ed-save").onclick = save;
-  $("#ed-copy").onclick = async () => { applyMeta(); try{ await navigator.clipboard.writeText(json()); status("data.json 내용을 복사했습니다. GitHub의 data.json에 붙여넣어 저장하면 됩니다.", "ok"); }catch(e){ status("복사하지 못했습니다. 브라우저 권한을 확인해 주세요.", "err"); } };
+  $("#ed-copy").onclick = async () => { applyMeta(); try{ await navigator.clipboard.writeText(json()); status("data.json 내용을 복사했습니다. GitHub의 data.json에 붙여넣어 저장해도 됩니다.", "ok"); }catch(e){ status("복사하지 못했습니다. 브라우저 권한을 확인해 주세요.", "err"); } };
   document.addEventListener("keydown", e => { if(e.key === "Escape" && $("#editor").classList.contains("open")) close(); });
   window.JTA_EDIT = { open };
   const tryHash = () => { if(location.hash === "#edit"){ if(J()) open(); else setTimeout(tryHash, 200); } };
